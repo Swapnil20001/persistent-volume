@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: es-master
+  # namespace: elasticsearch
+  labels:
+    app: elasticsearch     
+spec:
+  serviceName: ediscovery
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch 
+  template:
+    metadata:
+      labels:
+        app: elasticsearch    
+    spec:
+      initContainers:
+      - name: increase-vm-max-map-count
+        image: busybox:1.27.2
+        command:
+        - sysctl
+        - -w
+        - vm.max_map_count=262144        
+        securityContext:
+          privileged: true
+      - name: increase-fd-ulimit
+        image: busybox:1.27.2
+        command:
+        - sh
+        - -c
+        - ulimit
+        - -n 65536          
+      - name: allow-fs-permissions
+        image: busybox:1.27.2
+        command:
+        - chown
+        - -R
+        - 1000:1000
+        - /usr/share/elasticsearch/data              
+        volumeMounts:
+        - name: master-data
+          mountPath: /usr/share/elasticsearch/data
+        securityContext:
+          privileged: true
+      - name: check-swap
+        image: busybox:1.27.2
+        command:
+        - sh
+        - -c
+        - cat
+        - /proc/swaps
+        securityContext:
+          privileged: true
+      terminationGracePeriodSeconds: 120
+      containers:
+      - name: es-master
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.9.2
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 9200
+          name: transport
+        resources:
+          requests:
+            memory: 1500Mi
+            cpu: 1000m
+          limits:
+            memory: 2000Mi
+            cpu: 1400m
+        securityContext:
+          capabilities:
+            add:
+            - IPC_LOCK
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: MAX_LOCKED_MEMORY
+          value: "unlimited"
+        - name: ES_HEAP_SIZE
+          value: 512m
+        - name: ES_JAVA_OPTS
+          value: -Xms1G -Xmx1G
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: node.master
+          value: "true"
+        - name: node.data
+          value: "true"
+        - name: node.ingest
+          value: "true"
+        - name: cluster.name
+          value: "mytest.es.cluster"
+        - name: cluster.no_master_block
+          value: "write"
+        - name: cluster.initial_master_nodes
+          value: "es-master-0,es-master-1"
+        - name: discovery.seed_hosts
+          value: "es-master-0,es-master-1"
+        - name: PROCESSORS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+        volumeMounts:
+        - name: master-data
+          mountPath: /usr/share/elasticsearch/data        
+      volumes:
+      - name: master-data
+        persistentVolumeClaim:
+          claimName: elasticsearch-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ediscovery
+  # namespace: elasticsearch
+  labels:
+    app: elasticsearch
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+  - name: transport
+    port: 9200
+    protocol: TCP
+  clusterIP: None
+      
